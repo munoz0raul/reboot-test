@@ -36,9 +36,22 @@ This message does not appear in factory-prebuilt rc3 images, which exhibit zero 
 
 ## Test Environments
 
-Three image configurations were tested:
+Four image configurations were tested:
 
-### ENV-A — rc3 OTA built (qli-2.0-rc3, OSTree SOTA stack)
+### ENV-A — qli-2.0 OTA built (qli-2.0, OSTree SOTA stack)
+
+Built from `qli-2.0` using:
+```
+kas build meta-qcom/ci/iq-8275-evk.yml:meta-qcom/ci/qcom-distro-sota.yml: \
+  meta-qcom/ci/performance.yml:meta-qcom/ci/ota-demo.yml \
+  --target qcom-multimedia-image
+```
+
+OSTree update agent on `:8088`. Script: `stress_test.py` (BOOT_TIMEOUT=150 s).
+
+Kernel: `6.18.30-01953-g5086fd78561b-dirty`, PSCI SMC Calling Convention **v1.1**
+
+### ENV-B — rc3 OTA built (qli-2.0-rc3, OSTree SOTA stack)
 
 Built from `qli-2.0-rc3` using:
 ```
@@ -51,7 +64,7 @@ OSTree update agent runs on `:8088`. Two versions built (v1: grey wallpaper / v2
 
 Kernel (from device): `6.x` rc3 series, PSCI SMC Calling Convention **v1.3**
 
-### ENV-B — qli-2.0 no-OTA built (qli-2.0, standard distro)
+### ENV-C — qli-2.0 no-OTA built (qli-2.0, standard distro)
 
 Built from `qli-2.0` without the SOTA stack. `fwupd` excluded via a kas fragment (`IMAGE_INSTALL:remove = "fwupd"`) to work around a recipe packaging failure in this version:
 ```
@@ -64,7 +77,7 @@ Script: `stress_test_noota.py` with `BOOT_TIMEOUT=600s`, `SLOW_THRESHOLD=120s`.
 
 Kernel: `Linux iq-8275-evk 6.18.30-01953-g5086fd78561b-dirty #1 SMP PREEMPT Mon Jun 22 14:20:22 UTC 2026 aarch64`, PSCI SMC Calling Convention **v1.1**
 
-### ENV-C — rc3 prebuilt (factory image, no OTA stack)
+### ENV-D — rc3 prebuilt (factory image, no OTA stack)
 
 Qualcomm-provided prebuilt rc3 image. Flashed directly without any custom Yocto build. Used as the control group — same physical hardware, different software stack.
 
@@ -85,9 +98,36 @@ Only `PCYCLE` results count as confirmed bugs. `SLOW_OK` is anomalous but not a 
 
 ## Test Results
 
-### ENV-A: rc3 OTA built — 5 OTA cycles + 21 plain reboots
+### ENV-A: qli-2.0 OTA built — 1 OTA + 8 plain reboots (BOOT_TIMEOUT=150 s)
 
-**Test script:** `stress_test_rc3.py` (BOOT_TIMEOUT=180 s — note: short timeout may under-count SLOW_OK)
+**Test script:** `stress_test.py` (early run; short timeout means some PCYCLE could be SLOW_OK)
+
+#### OTA reboot phase
+
+| Phase | Direction | Result |
+|-------|-----------|--------|
+| OTA01 | v1 → v2 | OK (~74 s) |
+
+The OTA reboot recovered. The watchdog EINVAL message appeared but the boot completed.
+
+#### Plain reboot phase
+
+| Reboot # | Type | Result |
+|----------|------|--------|
+| plain01 | reboot | OK (~36 s) |
+| plain02 | reboot | OK (~36 s) |
+| plain03 | reboot | OK (~36 s) |
+| plain04 | reboot | OK (~35 s) |
+| plain05 | reboot | OK (~35 s) |
+| plain06 | reboot | OK (~35 s) |
+| plain07 | reboot | **PCYCLE** (>150 s) |
+| plain08 | — | test ended |
+
+**1 of 7 plain reboots stuck (14%).** Test ended after first PCYCLE. Watchdog EINVAL confirmed in the serial log of the stuck reboot.
+
+---
+
+### ENV-B: rc3 OTA built — 5 OTA cycles + 21 plain reboots (BOOT_TIMEOUT=180 s)
 
 #### OTA reboot phases
 
@@ -131,7 +171,7 @@ Only `PCYCLE` results count as confirmed bugs. `SLOW_OK` is anomalous but not a 
 
 ---
 
-### ENV-B: qli-2.0 no-OTA built — 30 plain reboots (BOOT_TIMEOUT=600 s)
+### ENV-C: qli-2.0 no-OTA built — 30 plain reboots (BOOT_TIMEOUT=600 s)
 
 **Test script:** `stress_test_noota.py`
 
@@ -152,7 +192,7 @@ The sysrq-b SLOW_OK at 443 s (plain20) occurred immediately after the plain19 re
 
 ---
 
-### ENV-C: rc3 prebuilt — 30 plain reboots (BOOT_TIMEOUT=600 s)
+### ENV-D: rc3 prebuilt — 30 plain reboots (BOOT_TIMEOUT=600 s)
 
 **0 of 30 reboots stuck. 0 SLOW_OK. Every boot completed in < 30 s.**
 
@@ -164,17 +204,27 @@ The watchdog error message **never appeared** in serial output for this image.
 
 | Environment | Image type | Reboots | PCYCLE | SLOW_OK | Watchdog EINVAL in log |
 |---|---|---|---|---|---|
-| ENV-C: rc3 prebuilt | Factory no-OTA | 30 | 0 (0%) | 0 | Never |
-| ENV-B: qli-2.0 no-OTA built | Built no-OTA | 30 | 2 (6.7%) | 1 | Every stuck boot |
-| ENV-A: rc3 OTA built | Built + SOTA | 21 plain + 5 OTA | 17+ (>80%) | unknown | Every stuck boot |
+| ENV-D: rc3 prebuilt | Factory no-OTA | 30 | 0 (0%) | 0 | Never |
+| ENV-C: qli-2.0 no-OTA built | Built no-OTA | 30 | 2 (6.7%) | 1 | Every stuck boot |
+| ENV-A: qli-2.0 OTA built | Built + SOTA | 1 OTA + 7 plain | 1 (14%) | unknown | Every stuck boot |
+| ENV-B: rc3 OTA built | Built + SOTA | 5 OTA + 21 plain | 17+ (>80%) | unknown | Every stuck boot |
 
 ---
 
 ## Serial TTY Evidence
 
-The following two logs show the exact sequence before every stuck reboot on ENV-A and ENV-B. These are from `/tmp/stress-logs-noota/diag/STUCK-plain19-reboot-195353.txt` and `STUCK-plain17-reboot-192822.txt`, captured by direct serial port read at 115200 baud.
+The following logs show the exact sequence before every stuck reboot. Captured by direct serial port read at 115200 baud.
 
-### STUCK-plain19-reboot (ENV-B)
+### ENV-A: qli-2.0 OTA built — STUCK-plain07-reboot
+
+```
+[17:45:42]  ...
+[17:46:09] systemd-shutdown[1]: Failed to set watchdog hardware timeout to 1min: Invalid argument
+[17:46:10] reboot: Restarting system
+[17:46:10]   ← blank — SoC silent for 150+ seconds
+```
+
+### ENV-C: qli-2.0 no-OTA built — STUCK-plain19-reboot
 
 ```
 [19:43:38] Qualcomm Linux Reference Distro 2.0 iq-8275-evk ttyMSM0
@@ -186,7 +236,7 @@ The following two logs show the exact sequence before every stuck reboot on ENV-
 [19:43:53]   ← blank — SoC silent for 600+ seconds
 ```
 
-### STUCK-plain17-reboot (ENV-B)
+### ENV-C: qli-2.0 no-OTA built — STUCK-plain17-reboot
 
 ```
 [19:18:07] iq-8275-evk login:
@@ -196,7 +246,7 @@ The following two logs show the exact sequence before every stuck reboot on ENV-
 [19:18:23]   ← blank — SoC silent for 600+ seconds
 ```
 
-### rc3 OTA STUCK-OTA02-v1tov2 (ENV-A)
+### ENV-B: rc3 OTA built — STUCK-OTA02-v1tov2
 
 ```
 [23:45:56] iq-8275-evk login:
@@ -206,13 +256,13 @@ The following two logs show the exact sequence before every stuck reboot on ENV-
 [23:46:28]   ← blank
 ```
 
-**The pattern is identical across ENV-A and ENV-B. The line is absent from every successful boot log and absent from all ENV-C logs.**
+**The pattern is identical across ENV-A, ENV-B, and ENV-C. The line is absent from every successful boot log and absent from all ENV-D logs.**
 
 ---
 
 ## Device Diagnostics
 
-From `boot00-baseline` (ENV-B, qli-2.0 no-OTA built):
+From `boot00-baseline` (ENV-C, qli-2.0 no-OTA built):
 
 ```
 Kernel:  Linux iq-8275-evk 6.18.30-01953-g5086fd78561b-dirty #1 SMP PREEMPT
@@ -222,7 +272,7 @@ Watchdog devices: /dev/watchdog  /dev/watchdog0
 Watchdog identity: qcom_wdt
 ```
 
-From `boot01-baseline` (ENV-A, rc3 OTA built):
+From `boot01-baseline` (ENV-B, rc3 OTA built):
 
 ```
 PSCI:    method=smc  compatible=arm,psci-1.0  convention=v1.3
@@ -249,8 +299,8 @@ However, the observed behavior suggests a secondary effect: the failed `ioctl(WD
 **Supporting evidence:**
 1. The message appears on every stuck boot and on no clean boot.
 2. `sysrq-b` (hard reset via `SysRq`, bypasses systemd entirely) also occasionally produces SLOW_OK (443 s) after a preceding reboot PCYCLE — the watchdog state set during the previous boot's shutdown persists until the watchdog timer expires or the SoC fully resets.
-3. The factory rc3 prebuilt image (0/30 stuck) never shows this message, ruling out hardware reliability as the cause.
-4. Both `reboot` and `sysrq-b` are affected (ENV-A: 81% stuck for both types), which points to a hardware-level interference with the reset path rather than a userspace-only issue.
+3. The factory rc3 prebuilt image (ENV-D, 0/30 stuck) never shows this message, ruling out hardware reliability as the cause.
+4. Both `reboot` and `sysrq-b` are affected (ENV-B: 81% stuck for both types), which points to a hardware-level interference with the reset path rather than a userspace-only issue.
 
 ---
 
@@ -322,8 +372,9 @@ qli-2.0 reports PSCI SMC Calling Convention **v1.1**; rc3 OTA built reports **v1
 | File | Description |
 |------|-------------|
 | `README.md` | This report |
-| `logs/STUCK-plain17-reboot.txt` | Serial TTY capture of first confirmed stuck reboot (ENV-B) |
-| `logs/STUCK-plain19-reboot.txt` | Serial TTY capture of second confirmed stuck reboot (ENV-B) |
-| `logs/STUCK-OTA02-v1tov2.txt` | Serial TTY capture of stuck OTA reboot (ENV-A) |
-| `scripts/stress_test_noota.py` | 30-reboot reliability test (ENV-B, BOOT_TIMEOUT=600 s) |
-| `scripts/stress_test_rc3.py` | OTA + reboot stress test (ENV-A) |
+| `logs/STUCK-plain17-reboot.txt` | Serial TTY capture — ENV-C stuck reboot #1 |
+| `logs/STUCK-plain19-reboot.txt` | Serial TTY capture — ENV-C stuck reboot #2 |
+| `logs/STUCK-OTA02-v1tov2.txt` | Serial TTY capture — ENV-B stuck OTA reboot |
+| `logs/STUCK-qli20-OTA-plain07-reboot.txt` | Serial TTY capture — ENV-A stuck plain reboot |
+| `scripts/stress_test_noota.py` | 30-reboot reliability test (ENV-C, BOOT_TIMEOUT=600 s) |
+| `scripts/stress_test_rc3.py` | OTA + reboot stress test (ENV-B) |
